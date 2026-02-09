@@ -10,11 +10,22 @@ from twilio.rest import Client
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = "super-secret-key-clinic-2025"
+app.secret_key = os.environ.get("SECRET_KEY", "super-secret-key-clinic-2025")
 
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///clinic.db'
+# Database configuration - use /tmp for ephemeral storage on Render
+if os.environ.get('RENDER'):
+    # On Render, use /tmp directory for SQLite (ephemeral but writable)
+    db_path = '/tmp/clinic.db'
+else:
+    # Local development
+    db_path = 'clinic.db'
+
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
+
+# Flag to track if DB is initialized
+db_initialized = False
 
 # ---------------- MODELS ----------------
 class Appointment(db.Model):
@@ -34,15 +45,28 @@ class AdminUser(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
 
 # ---------------- INIT DB ----------------
-with app.app_context():
-    db.create_all()
-    if not AdminUser.query.filter_by(username="admin").first():
-        admin = AdminUser(
-            username="admin",
-            password_hash=generate_password_hash("lavanys123")
-        )
-        db.session.add(admin)
-        db.session.commit()
+def init_db():
+    """Initialize database and create default admin user"""
+    global db_initialized
+    if not db_initialized:
+        try:
+            db.create_all()
+            if not AdminUser.query.filter_by(username="admin").first():
+                admin = AdminUser(
+                    username="admin",
+                    password_hash=generate_password_hash("lavanys123")
+                )
+                db.session.add(admin)
+                db.session.commit()
+            db_initialized = True
+        except Exception as e:
+            print(f"Database initialization error: {e}")
+            db_initialized = True  # Prevent repeated attempts
+
+@app.before_request
+def before_request():
+    """Initialize database on first request"""
+    init_db()
 
 # ---------------- TWILIO ----------------
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
